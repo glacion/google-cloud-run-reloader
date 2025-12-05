@@ -11,22 +11,19 @@ This keeps secrets in environment variables or mounted volumes fresh without man
 - The service template revision is updated (metadata change only), which forces Cloud Run to create a new revision and pick up the new secret value.
 
 ## Requirements
-- A Google Cloud project with billing enabled
-- `gcloud` CLI authenticated to the target project
-- Docker for building the container image (set `DOCKER_DEFAULT_PLATFORM=linux/amd64` on arm64 hosts)
-- Rust toolchain (only if you plan to develop locally)
+- A Google Cloud project with billing enabled.
+- `gcloud` CLI authenticated to the target project.
+- Docker for building the container image.
+- Rust toolchain (only if you plan to develop locally).
 
 ## Setup and deployment
 Export commonly used values:
 
 ```bash
-export PROJECT_ID=$(gcloud config get-value project)
-export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
+export DOCKER_BUILDKIT=1
+export PROJECT_ID=glacioncom
 export REGION=us-central1
 export SERVICE_ACCOUNT=reloader
-# Needed if you're building on arm64 hosts
-export DOCKER_DEFAULT_PLATFORM=linux/amd64
-export DOCKER_BUILDKIT=1
 ```
 
 Enable required services:
