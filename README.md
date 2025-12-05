@@ -1,146 +1,153 @@
-# Google Cloud Run Reloader
+# Google Cloud Run Secret Reloader
 
-Automatically trigger new revisions for Cloud Run services when their referenced Google Cloud Secrets are updated.
+A lightweight Cloud Run service that listens for Secret Manager version events and forces new revisions for any Cloud Run services still pointing at `latest` secret versions.
+This keeps secrets in environment variables or mounted volumes fresh without manual redeploys.
 
-## Overview
+## How it works
+- Eventarc delivers Secret Manager `AddSecretVersion` audit log entries as CloudEvents to this service.
+- The handler extracts the project and secret ID from the event payload.
+- Cloud Run services in the project (all regions) are listed via the Cloud Run v2 API.
+- Services that reference the updated secret using the `latest` version (env var `secretKeyRef` or secret volume) are selected.
+- The service template revision is updated (metadata change only), which forces Cloud Run to create a new revision and pick up the new secret value.
 
-When a secret in Google Cloud Secret Manager gets a new version, 
-Cloud Run services referencing the ":latest" version of that secret via environment variables do not automatically pick up the new value until they are redeployed. 
-Services mounting secrets as volumes will eventually see the change, but a redeploy ensures immediate consistency.
+## Requirements
+- A Google Cloud project with billing enabled
+- `gcloud` CLI authenticated to the target project
+- Docker for building the container image (set `DOCKER_DEFAULT_PLATFORM=linux/amd64` on arm64 hosts)
+- Rust toolchain (only if you plan to develop locally)
 
-**Reloader** solves this by:
-1.  Receiving CloudEvents (via Eventarc triggering on Secret Manager Audit Logs).
-2.  identifying which Cloud Run services are using the updated secret.
-3.  Forcing a new revision for those services by updating a specific annotation.
-
-## How It Works
-
-1.  **Receive Event:** The service listens on port `8080` for CloudEvents. It parses the `protoPayload` from the audit log entry.
-2.  **Identify Secret:** It extracts the project ID and secret ID from the `resourceName` in the incoming event.
-3.  **Scan Services:** It lists all Cloud Run services in the project (across all regions).
-4.  **Filter:** It identifies services that:
-    *   Reference the updated secret.
-    *   Use the `latest` version of that secret (either in environment variables or volume mounts).
-5.  **Trigger Update:** For every matching service, it updates the `reloader.glacion.com/timestamp` annotation in the service template with the current epoch timestamp. This metadata change forces Cloud Run to create a new revision.
-
-## Prerequisites
-
-*   **Google Cloud Project** with billing enabled.
-*   **gcloud CLI** installed and configured.
-*   **Rust** toolchain (for local development/building).
-
-## Setup & Deployment
-
-### 1. Environment Variables
-
-Set the required environment variables for the setup commands:
+## Setup and deployment
+Export commonly used values:
 
 ```bash
 export PROJECT_ID=$(gcloud config get-value project)
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
 export REGION=us-central1
 export SERVICE_ACCOUNT=reloader
-# Needed if you're running from arm machines
+# Needed if you're building on arm64 hosts
 export DOCKER_DEFAULT_PLATFORM=linux/amd64
+export DOCKER_BUILDKIT=1
 ```
 
-### 2. Enable APIs
-
-Enable the necessary Google Cloud APIs:
+Enable required services:
 
 ```bash
-gcloud services enable \
+gcloud --project=$PROJECT_ID services enable \
+  artifactregistry.googleapis.com \
   run.googleapis.com \
   eventarc.googleapis.com \
-  secretmanager.googleapis.com \
-  cloudbuild.googleapis.com
+  secretmanager.googleapis.com
 ```
 
-### 3. Enable Audit Logs
+Turn on Secret Manager Data Access audit logs (required for Eventarc):
+1. Open IAM & Admin → Audit Logs in the Cloud Console.
+2. Search for **Secret Manager API**.
+3. Enable all Data Access logs for the project and save.
 
-Eventarc relies on Cloud Audit Logs to trigger on Secret Manager changes. You must enable Data Access audit logs for the Secret Manager API.
-
-1.  Go to [IAM & Admin > Audit Logs](https://console.cloud.google.com/iam-admin/audit) in the Google Cloud Console.
-2.  Search for "Secret Manager API".
-3.  Select it and check **"Data Write"**.
-4.  Click **Save**.
-
-### 4. Create Service Account
-
-Create a service account for the Reloader service and Eventarc trigger:
+Create the service account and grant permissions:
 
 ```bash
-# Create service account
 gcloud iam service-accounts create $SERVICE_ACCOUNT \
-  --display-name="Reloader Service Account"
+  --display-name="Reloader" \
+  --project=$PROJECT_ID
 
-# Grant permission to list and update Cloud Run services
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/run.developer"
 
-# Grant permission to resolve project numbers
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/resourcemanager.projectAccessor"
+  --role="roles/artifactregistry.reader"
 
-# Grant permission for Eventarc to receive events
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser"
+
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/eventarc.eventReceiver"
-
-# Grant permission for Eventarc to invoke the Reloader service
-gcloud run services add-iam-policy-binding $SERVICE_ACCOUNT \
-  --region $REGION \
-  --member="serviceAccount:$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/run.invoker"
-
-# Allow Pub/Sub to create tokens for the service account (required for Eventarc)
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-pubsub.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountTokenCreator"
 ```
 
-### 5. Build and Deploy
-
-1.  **Build the container image:**
-
-    ```bash
-    docker build --tag gcr.io/$PROJECT_ID/reloader:0.1.0 .
-    docker push gcr.io/$PROJECT_ID/reloader:0.1.0
-    ```
-
-2.  **Deploy to Cloud Run:**
-
-    ```bash
-    gcloud run deploy reloader \
-      --image=gcr.io/$PROJECT_ID/reloader:0.1.0 \
-      --ingress=internal \
-      --no-allow-unauthenticated \
-      --region=$REGION \
-      --service-account=$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com
-    ```
-
-### 6. Configure Eventarc Trigger
-
-Create the trigger to invoke the Reloader service when a secret version is added:
+Create (or ensure) an Artifact Registry Docker repository for the image:
 
 ```bash
-gcloud eventarc triggers create reloader-trigger \
+gcloud artifacts repositories create gcr.io \
+  --project=$PROJECT_ID \
+  --location=us \
+  --repository-format=docker
+```
+
+Build and push the container image:
+
+```bash
+docker build \
+  --platform=linux/amd64 \
+  --push \
+  --tag=gcr.io/$PROJECT_ID/reloader:0.1.0 \
+  .
+```
+
+Deploy to Cloud Run:
+
+```bash
+gcloud run deploy reloader \
+  --concurrency=1 \
+  --cpu=0.1 \
+  --image=gcr.io/$PROJECT_ID/reloader:0.1.0 \
+  --ingress=internal \
+  --memory=128Mi \
+  --min-instances=0 \
+  --no-allow-unauthenticated \
+  --project=$PROJECT_ID \
+  --region=$REGION \
+  --service-account=$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com
+
+# Allow Eventarc to invoke the service
+gcloud run services add-iam-policy-binding reloader \
+  --member="serviceAccount:$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com" \
+  --project=$PROJECT_ID \
+  --region=$REGION \
+  --role="roles/run.invoker"
+```
+
+Create the Eventarc trigger:
+
+```bash
+gcloud eventarc triggers create reloader \
   --destination-run-region=$REGION \
   --destination-run-service=reloader \
   --event-filters="methodName=google.cloud.secretmanager.v1.SecretManagerService.AddSecretVersion" \
   --event-filters="serviceName=secretmanager.googleapis.com" \
   --event-filters="type=google.cloud.audit.log.v1.written" \
+  --location=global \
+  --project=$PROJECT_ID \
   --service-account=$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com
 ```
 
-## Local Development
+## Verifying the setup
+- Deploy a Cloud Run service that references a Secret Manager secret using the `latest` version (env var or secret volume).
+- Add a new version to that secret (`gcloud secrets versions add SECRET --data-file=...`).
+- Check Reloader logs (`gcloud run services logs read reloader --region $REGION`) and confirm the dependent service gets a new revision.
 
-To run the service locally:
+## Local development
+Run locally with Application Default Credentials so the Cloud Run API can be called:
 
 ```bash
 cargo run
 ```
 
-Note: Local execution will fail to connect to Google Cloud APIs unless you have Application Default Credentials configured (`gcloud auth application-default login`).
+The server listens on `0.0.0.0:8080` and expects CloudEvents. Example event payload for manual testing:
+
+```json
+{
+  "protoPayload": {
+    "authenticationInfo": { "principalEmail": "user@example.com" },
+    "resourceName": "projects/123456789/secrets/my-secret/versions/5"
+  }
+}
+```
+
+You can POST this JSON as CloudEvent data using a tool like `cloudevents` CLI or by crafting CloudEvent headers; running inside Cloud Run via Eventarc requires no manual headers.
+
+## Logging
+Structured JSON logs are emitted via `tracing` with `RUST_LOG` respected (default `info`). Set `RUST_LOG=debug` during troubleshooting.

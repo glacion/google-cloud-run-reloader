@@ -3,15 +3,15 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-pub struct AppError(anyhow::Error);
+pub struct Error(anyhow::Error);
 
-impl From<google_cloud_run_v2::Error> for AppError {
+impl From<google_cloud_run_v2::Error> for Error {
     fn from(value: google_cloud_run_v2::Error) -> Self {
         value.into()
     }
 }
 
-impl IntoResponse for AppError {
+impl IntoResponse for Error {
     fn into_response(self) -> Response {
         (
             StatusCode::INTERNAL_SERVER_ERROR,

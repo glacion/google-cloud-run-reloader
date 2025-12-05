@@ -1,10 +1,10 @@
 mod entry;
 mod error;
 
-use anyhow::{Context, Error, Result};
+use anyhow::{Context, Result};
 use axum::{Extension, Router, http::StatusCode, routing::post, serve};
 use entry::Entry;
-use error::AppError;
+use error::Error;
 use futures::future::join_all;
 use google_cloud_run_v2::{client::Services as CloudRun, model::Service};
 use std::net::SocketAddr;
@@ -66,61 +66,56 @@ fn volume(service: &Service, secret_id: &str) -> bool {
             .volumes
             .iter()
             .filter_map(|volume| volume.secret())
-            .filter(|source| source.secret == secret_id)
+            .filter(|source| source.secret.split("/").last() == Some(secret_id))
             .map(|source| &source.items)
             .any(|paths| paths.is_empty() || paths.iter().any(|path| path.version == "latest"))
     })
 }
 
-async fn handler(
-    Extension(run): Extension<CloudRun>,
-    entry: Entry,
-) -> Result<StatusCode, AppError> {
-    let resource_name = entry.proto_payload.resource_name;
-    let parts: Vec<_> = resource_name.split('/').collect();
+async fn handler(Extension(run): Extension<CloudRun>, entry: Entry) -> Result<StatusCode, Error> {
+    // projects/PROJECT_NUMBER/secrets/SECRET_NAME/versions/VERSION_NUMBER
+    let actor = entry.proto_payload.authentication_info.principal_email;
+    let resource = entry.proto_payload.resource_name;
+    let parts: Vec<_> = resource.split('/').collect();
     let project = parts[1];
     let secret = parts[3];
-    let location_id = "-"; // all regions
-    info!("secret changed: {}", secret);
-
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        .to_string();
+    let location = "-";
+    info!(actor = actor, resource = resource, "secret changed");
 
     let operations = run
         .list_services()
-        .set_parent(format!("projects/{}/locations/{}", project, location_id))
+        .set_parent(format!("projects/{}/locations/{}", project, location))
         .send()
         .await?
         .services
         .into_iter()
         .filter(|service| environment(service, secret) || volume(service, secret))
         .map(async |mut service: Service| -> Result<()> {
-            info!("updating service {}", service.name);
+            info!(service = service.name, "updating service");
 
             service.template.as_mut().map(|template| {
-                template.annotations.insert(
-                    "reloader.glacion.com/timestamp".to_string(),
-                    timestamp.clone(),
-                );
+                template.revision = String::new();
             });
 
             run.update_service()
                 .set_service(service)
                 .send()
                 .await
-                .context("failed to update service")?;
+                .map_err(|error| {
+                    error!(
+                        error = error.status().unwrap().message,
+                        "failed to update service"
+                    );
+                    error
+                })?;
 
             Ok(())
         });
 
-    join_all(operations.collect::<Vec<_>>())
+    let _ = join_all(operations.collect::<Vec<_>>())
         .await
         .iter()
-        .filter_map(|result: &Result<(), Error>| result.as_ref().err())
-        .for_each(|error| error!("failed to update service: {}", error));
+        .filter_map(|result: &Result<(), anyhow::Error>| result.as_ref().err());
 
     Ok(StatusCode::OK)
 }
