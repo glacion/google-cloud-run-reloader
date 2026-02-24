@@ -2,6 +2,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use std::fmt::{Display, Formatter};
 use tracing::{error, warn};
 
 pub enum Error {
@@ -28,6 +29,15 @@ impl From<google_cloud_run_v2::Error> for Error {
 impl From<anyhow::Error> for Error {
     fn from(value: anyhow::Error) -> Self {
         Self::Internal(value)
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BadRequest(error) => write!(formatter, "bad request: {error}"),
+            Self::Internal(error) => write!(formatter, "internal error: {error}"),
+        }
     }
 }
 

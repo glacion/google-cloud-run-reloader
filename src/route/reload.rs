@@ -1,26 +1,39 @@
-use axum::{Extension, Router, http::StatusCode, routing::post};
-use tracing::info;
-
 use crate::{
+    middleware::log::Log,
     model::{Entry, Error, Secret},
     service::cloud_run::CloudRunService,
 };
+use axum::{Json, Router, extract::State, middleware::from_fn, routing::post};
+use tower_http::trace::TraceLayer;
+use tracing::{info, instrument};
 
-pub fn router(cloud_run: CloudRunService) -> Router {
-    Router::new()
-        .route("/", post(handler))
-        .layer(Extension(cloud_run))
+#[derive(Clone, Debug)]
+pub struct Reload {
+    cloud_run: CloudRunService,
 }
 
-pub async fn handler(
-    Extension(cloud_run): Extension<CloudRunService>,
-    entry: Entry,
-) -> Result<StatusCode, Error> {
-    let change = Secret::parse_change(entry)?;
-    info!(actor = change.actor, resource = change.resource, "secret changed");
-    cloud_run
-        .reload_services_for_secret(&change.project, &change.secret)
-        .await?;
+impl Reload {
+    pub fn init(cloud_run: CloudRunService) -> Router {
+        let route = Self { cloud_run };
+        Router::new()
+            .route("/", post(Self::handler))
+            .with_state(route)
+            .layer(from_fn(Log::request))
+            .layer(TraceLayer::new_for_http())
+    }
 
-    Ok(StatusCode::OK)
+    #[instrument(skip(entry, state))]
+    async fn handler(State(state): State<Self>, entry: Entry) -> Result<Json<Vec<String>>, Error> {
+        let change = Secret::parse_change(entry)?;
+        let services = state
+            .cloud_run
+            .reload(&change.project, &change.secret)
+            .await?;
+        info!(
+            actor = change.actor,
+            resource = change.secret,
+            "secret changed"
+        );
+        Ok(Json(services))
+    }
 }

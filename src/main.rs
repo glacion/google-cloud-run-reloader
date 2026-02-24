@@ -1,41 +1,31 @@
+mod config;
 mod middleware;
 mod model;
 mod route;
 mod service;
+mod telemetry;
 
-use anyhow::{Context, Result};
-use axum::{middleware::from_fn, serve};
+use anyhow::Result;
+use axum::serve;
+use clap::Parser;
+use config::Config;
 use service::cloud_run::CloudRunService;
-use std::net::SocketAddr;
+use telemetry::Telemetry;
 use tokio::net::TcpListener;
-use tracing::info;
-use tracing_subscriber::{EnvFilter, fmt::Layer, prelude::*, registry};
+
+use route::Router;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    registry()
-        .with(EnvFilter::from_default_env())
-        .with(
-            Layer::new()
-                .json()
-                .flatten_event(true)
-                .with_target(false)
-                .with_ansi(false),
-        )
-        .init();
+    let config = Config::parse();
+    let telemetry = Telemetry::init(&config.opentelemetry).await?;
+    let cloud_run = CloudRunService::init().await?;
 
-    info!("connecting to cloud run");
-    let cloud_run = CloudRunService::connect().await?;
+    let router = Router::init(cloud_run);
 
-    let router = route::router(cloud_run).layer(from_fn(middleware::log::log_requests));
+    let listener = TcpListener::bind(config.server.address()?).await?;
+    serve(listener, router.axum).await?;
 
-    let address = SocketAddr::from(([0, 0, 0, 0], 8080));
-    let listener = TcpListener::bind(address)
-        .await
-        .context("Failed to bind TCP listener")?;
-
-    info!("starting server");
-    serve(listener, router).await.context("server error")?;
-
+    telemetry.shutdown()?;
     Ok(())
 }
