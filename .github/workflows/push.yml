@@ -31,17 +31,8 @@ jobs:
       - name: Export direnv
         run: nix develop .#default -c direnv export gha >> "$GITHUB_ENV"
 
-      - name: Build Docker stream script
-        run: nix build .#dockerStream --out-link docker-image-stream
+      - name: Build Image
+        run: nix build .#stream
 
-      - name: Load Docker image
-        run: ./docker-image-stream | docker load
-
-      - name: Authenticate to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Tag Docker image
-        run: docker tag reloader:latest ghcr.io/${{ github.repository }}:${{ github.sha }} && docker tag reloader:latest ghcr.io/${{ github.repository }}:latest
-
-      - name: Push Docker image
-        run: docker push ghcr.io/${{ github.repository }}:${{ github.sha }} && docker push ghcr.io/${{ github.repository }}:latest
+      - name: Push Image
+        run: ./stream | gzip --fast | skopeo -- copy --dest-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" docker-archive:/dev/stdin docker://ghcr.io/${{ github.repository }}:${{ github.sha }}

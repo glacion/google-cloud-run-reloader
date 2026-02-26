@@ -16,6 +16,9 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
+        name = "reloader";
+        version = self.rev or self.dirtyRev;
+
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ (import rust-overlay) ];
@@ -35,38 +38,16 @@
       in
       {
         packages = rec {
-          default = release;
-          release = pkgs.rustPlatform.buildRustPackage {
-            name = "reloader";
-            version = self.shortRev;
+          default = pkgs.rustPlatform.buildRustPackage {
+            inherit name version;
+            cargoLock.lockFile = ./Cargo.lock;
             src = ./.;
-            cargoLock = {
-              lockFile = ./Cargo.lock;
-            };
           };
-
-          docker = pkgs.dockerTools.buildImage {
-            name = "reloader";
-            tag = self.shortRev;
-            copyToRoot = pkgs.buildEnv {
-              name = "root";
-              paths = [
-                release
-                pkgs.dockerTools.caCertificates
-                pkgs.dockerTools.fakeNss
-              ];
-            };
-            config = {
-              Env = [ "RUST_LOG=info" ];
-              Entrypoint = [ "/bin/reloader" ];
-            };
-          };
-
-          dockerStream = pkgs.dockerTools.streamLayeredImage {
-            name = "reloader";
-            tag = self.shortRev;
+          stream = pkgs.dockerTools.streamLayeredImage {
+            inherit name;
+            tag = self.dirtyShortRev;
             contents = [
-              release
+              default
               pkgs.dockerTools.caCertificates
               pkgs.dockerTools.fakeNss
             ];
@@ -82,6 +63,7 @@
             packages = [
               rustToolchain
               pkgs.direnv
+              pkgs.skopeo
             ];
           };
         };
