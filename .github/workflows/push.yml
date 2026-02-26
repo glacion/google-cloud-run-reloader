@@ -1,0 +1,36 @@
+name: Push
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  flake-ci:
+    runs-on: ubuntu-latest
+    container:
+      image: nixos/nix:latest
+    env:
+      NIX_CONFIG: experimental-features = nix-command flakes
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Enable Magic Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Validate flake outputs
+        run: nix flake check
+
+      - name: Allow direnv
+        run: nix develop .#default -c direnv allow .
+
+      - name: Export direnv
+        run: nix develop .#default -c direnv export gha >> "$GITHUB_ENV"
+
+      - name: Run hadolint
+        run: hadolint Dockerfile
