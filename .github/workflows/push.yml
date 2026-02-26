@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  flake-ci:
+  image:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
