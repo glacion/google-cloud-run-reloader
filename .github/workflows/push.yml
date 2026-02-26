@@ -35,4 +35,4 @@ jobs:
         run: nix build .#stream
 
       - name: Push Image
-        run: ./stream | gzip --fast | skopeo -- copy --dest-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" docker-archive:/dev/stdin docker://ghcr.io/${{ github.repository }}:${{ github.sha }}
+        run: ./result | gzip --fast | skopeo copy --dest-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" docker-archive:/dev/stdin docker://ghcr.io/${{ github.repository }}:${{ github.sha }}
