@@ -45,7 +45,7 @@
           };
           stream = pkgs.dockerTools.streamLayeredImage {
             inherit name;
-            tag = self.dirtyShortRev;
+            tag = version;
             contents = [
               default
               pkgs.dockerTools.caCertificates
