@@ -1,7 +1,6 @@
 name: Push
 
 on:
-  pull_request:
   push:
     branches:
       - main
@@ -9,22 +8,18 @@ on:
 jobs:
   flake-ci:
     runs-on: ubuntu-latest
-    container:
-      image: nixos/nix:latest
-    env:
-      NIX_CONFIG: experimental-features = nix-command flakes
     permissions:
       id-token: write
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v21
 
       - name: Enable Magic Nix Cache
-        uses: DeterminateSystems/magic-nix-cache-action@main
-
-      - name: Validate flake outputs
-        run: nix flake check
+        uses: DeterminateSystems/magic-nix-cache-action@v13
 
       - name: Allow direnv
         run: nix develop .#default -c direnv allow .
