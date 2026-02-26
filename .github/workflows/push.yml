@@ -21,6 +21,9 @@ jobs:
       - name: Enable Magic Nix Cache
         uses: DeterminateSystems/magic-nix-cache-action@v13
 
+      - name: Check Nix Flake
+        uses: DeterminateSystems/flake-checker-action@main
+
       - name: Allow direnv
         run: nix develop .#default -c direnv allow .
 
