@@ -7,6 +7,7 @@
 
   outputs =
     {
+      self,
       nixpkgs,
       flake-utils,
       rust-overlay,
@@ -33,13 +34,54 @@
         );
       in
       {
+        packages = rec {
+          default = release;
+          release = pkgs.rustPlatform.buildRustPackage {
+            name = "reloader";
+            version = self.shortRev;
+            src = ./.;
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+            };
+          };
+
+          docker = pkgs.dockerTools.buildImage {
+            name = "reloader";
+            tag = self.shortRev;
+            copyToRoot = pkgs.buildEnv {
+              name = "root";
+              paths = [
+                release
+                pkgs.dockerTools.caCertificates
+                pkgs.dockerTools.fakeNss
+              ];
+            };
+            config = {
+              Env = [ "RUST_LOG=info" ];
+              Entrypoint = [ "/bin/reloader" ];
+            };
+          };
+
+          dockerStream = pkgs.dockerTools.streamLayeredImage {
+            name = "reloader";
+            tag = self.shortRev;
+            contents = [
+              release
+              pkgs.dockerTools.caCertificates
+              pkgs.dockerTools.fakeNss
+            ];
+            config = {
+              Env = [ "RUST_LOG=info" ];
+              Entrypoint = [ "/bin/reloader" ];
+            };
+          };
+        };
+
         devShells = {
           default = pkgs.mkShell {
             packages = [
               rustToolchain
-              pkgs.buck2
               pkgs.direnv
-              pkgs.hadolint
             ];
           };
         };
