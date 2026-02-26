@@ -1,0 +1,16 @@
+[buck2]
+clean_stale_enabled = true
+defer_write_actions = true
+restarter = true
+sqlite_materializer_state = true
+
+[cells]
+  root = .
+  prelude = prelude
+
+[external_cells]
+  prelude = git
+
+[external_cell_prelude]
+  git_origin = https://github.com/glacion/buck2-prelude.git
+  commit_hash = 5f21ec84a98468195b1d5de886ed025981ab359c

@@ -37,6 +37,7 @@
           default = pkgs.mkShell {
             packages = [
               rustToolchain
+              pkgs.buck2
               pkgs.direnv
               pkgs.hadolint
             ];
