@@ -18,7 +18,7 @@ use route::Router;
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::parse();
-    let telemetry = Telemetry::init(&config.opentelemetry).await?;
+    let telemetry = Telemetry::init().await?;
     let cloud_run = CloudRunService::init().await?;
 
     let router = Router::init(cloud_run);
@@ -26,6 +26,5 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(config.server.address()?).await?;
     serve(listener, router.axum).await?;
 
-    telemetry.shutdown()?;
     Ok(())
 }
