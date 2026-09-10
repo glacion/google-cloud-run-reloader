@@ -97,7 +97,8 @@ gcloud run deploy reloader \
   --no-allow-unauthenticated \
   --project=$PROJECT_ID \
   --region=$REGION \
-  --service-account=$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com
+  --service-account=$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com \
+  --timeout=900s
 
 # Allow Eventarc to invoke the service
 gcloud run services add-iam-policy-binding reloader \
@@ -120,6 +121,10 @@ gcloud eventarc triggers create reloader \
   --project=$PROJECT_ID \
   --service-account=$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com
 ```
+
+### Timeouts
+
+The reloader waits for Cloud Run to finish creating each dependent service revision before responding, so Eventarc can retry actual update failures. Set the reloader's `--timeout` high enough for those revisions to complete; increase `900s` if your services need longer. If Eventarc repeatedly redelivers an event or creates repeated revisions, check the reloader logs for request timeouts and raise this value.
 
 ## Verifying the setup
 - Deploy a Cloud Run service that references a Secret Manager secret using the `latest` version (env var or secret volume).
